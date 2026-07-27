@@ -4,6 +4,7 @@
   "description": "Web browser workspace for Pi — a standalone web server that manages multiple live Pi RPC sessions in parallel.",
   "keywords": [
     "pi",
+    "pi-package",
     "pi-coding-agent",
     "ai-agent",
     "ai-coding-agent",
