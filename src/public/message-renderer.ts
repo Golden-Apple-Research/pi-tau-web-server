@@ -59,7 +59,7 @@ export class MessageRenderer {
     `;
   }
 
-  renderUserMessage(message: RenderMessage, isHistory = false) {
+  renderUserMessage(message: RenderMessage, isHistory = false, target: ParentNode = this.container) {
     // Remove welcome message if present
     const welcome = this.container.querySelector('.welcome');
     if (welcome) welcome.remove();
@@ -82,11 +82,11 @@ export class MessageRenderer {
       <button class="message-copy-btn" aria-label="Copy message"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
     `;
     this._setupCopyBtn(div);
-    this.container.appendChild(div);
+    target.appendChild(div);
     if (!isHistory) this.scrollToBottom();
   }
 
-  renderAssistantMessage(message: RenderMessage, isStreaming = false, isHistory = false) {
+  renderAssistantMessage(message: RenderMessage, isStreaming = false, isHistory = false, target: ParentNode = this.container) {
     // Remove welcome message if present
     const welcome = this.container.querySelector('.welcome');
     if (welcome) welcome.remove();
@@ -127,7 +127,7 @@ export class MessageRenderer {
     `;
 
     if (!isStreaming) this._setupCopyBtn(div);
-    this.container.appendChild(div);
+    target.appendChild(div);
     if (!isHistory) this.scrollToBottom();
 
     return div;

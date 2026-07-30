@@ -17,10 +17,9 @@ import { setupVoiceInput } from './voice-input.js';
 import { setupCommandPalette } from './command-palette.js';
 import { setupSessionStatsCard, type SessionStats } from './session-stats-card.js';
 import { isImeComposition } from './keyboard.js';
+import { buildHistoryItems, type HistoryItem, type SessionHistoryEntry } from './history-render.js';
 
 import type { AppEvent, AppMessage, ExtensionUIRequest, LiveInstance, LiveSession, MessageContentBlock, ModelRecord, PendingFilePath, PendingImage, QueuedCommand, RpcCommand, UsageRecord } from './app-types.js';
-
-type SessionHistoryEntry = { type?: string; message?: AppMessage };
 
 type LiveSessionSnapshotData = {
   sessionId?: string;
@@ -436,8 +435,7 @@ function handleLiveSessionClosed(closedId: string) {
     state.reset();
     showTypingIndicator(false);
     if (wasViewingActive) {
-      messageRenderer.clear();
-      toolCardRenderer.clear();
+      clearConversation();
       const next = getMostRecentLiveSession();
       if (next) selectLiveSession(next.id);
       else {
@@ -575,8 +573,7 @@ async function selectLiveSession(id: string) {
   currentStreamingText = '';
   state.reset();
   state.setStreaming(!!session.isStreaming);
-  messageRenderer.clear();
-  toolCardRenderer.clear();
+  clearConversation();
   try {
     const res = await fetch(`/api/live-sessions/${encodeURIComponent(id)}/snapshot`);
     const data = await res.json();
@@ -1559,8 +1556,7 @@ async function switchSession(sessionFile: string | null | undefined, session: Si
     state.reset();
     showTypingIndicator(false);
     updateUI();
-    messageRenderer.clear();
-    toolCardRenderer.clear();
+    clearConversation();
 
     // Clicking a historical session resumes it as a live backend Tau tab.
     // selectLiveSession() will load the resumed tab snapshot with the same
@@ -1583,7 +1579,7 @@ async function switchSession(sessionFile: string | null | undefined, session: Si
         });
         const data = await res.json();
         if (!res.ok || data.error) {
-          messageRenderer.clear();
+          clearConversation();
           messageRenderer.renderError(data.error || 'Failed to resume session');
           viewingActiveSession = false;
           updateLiveSessionInputState();
@@ -1599,7 +1595,7 @@ async function switchSession(sessionFile: string | null | undefined, session: Si
         upsertLiveSession(data.session);
         await selectLiveSession(data.session.id);
       } catch (e) {
-        messageRenderer.clear();
+        clearConversation();
         messageRenderer.renderError('Failed to resume session');
         viewingActiveSession = false;
         updateLiveSessionInputState();
@@ -1650,7 +1646,7 @@ function applyLiveSessionSnapshot(data: LiveSessionSnapshotData) {
   currentStreamingElement = null;
   currentStreamingThinking = '';
   currentStreamingText = '';
-  messageRenderer.clear();
+  clearConversation();
   sessionTotalCost = 0;
   lastInputTokens = 0;
   lastUsage = null;
@@ -1729,96 +1725,72 @@ function updateLiveSessionInputState() {
 // Session history rendering
 // ═══════════════════════════════════════
 
-function renderSessionHistory(entries: SessionHistoryEntry[]) {
-  console.log(`[History] Rendering ${entries.length} entries`);
-  let userCount = 0, assistantCount = 0, toolCardCount = 0, toolResultCount = 0;
+// How many of the newest items are rendered synchronously before first paint;
+// everything older is prepended above in idle-scheduled chunks.
+const INITIAL_SYNC_ITEMS = 30;
+const HISTORY_CHUNK_ITEMS = 50;
 
-  for (const entry of entries) {
-    if (entry.type !== 'message') continue;
+// Browsers with native scroll anchoring (Chrome, Firefox) keep the viewport
+// pinned to visible content when history is prepended above it; browsers
+// without it (Safari) need manual scrollTop compensation per chunk.
+const supportsScrollAnchoring =
+  typeof CSS !== 'undefined' && !!CSS.supports && CSS.supports('overflow-anchor', 'auto');
 
-    const msg = entry.message;
-    if (!msg) continue;
+// Generation token for the progressive history fill. Bumping it invalidates
+// every scheduled chunk callback, so switching sessions (or re-applying a
+// snapshot) mid-fill cannot interleave stale chunks into the new conversation.
+let historyRenderToken = 0;
 
-    if (msg.role === 'user') {
-      const content =
-        typeof msg.content === 'string'
-          ? msg.content
-          : (msg.content || [])
-              .filter((b) => b.type === 'text')
-              .map((b) => b.text)
-              .join('\n');
-      // Extract images from content blocks
-      const images = Array.isArray(msg.content)
-        ? msg.content
-            .filter((b) => b.type === 'image')
-            .map((b) => ({ data: b.source?.data || b.data || '', mimeType: b.source?.media_type || b.media_type || 'image/png' }))
-        : [];
-      if (content || images.length > 0) {
-        userCount++;
-        messageRenderer.renderUserMessage({ content: content || '', images: images.length > 0 ? images : undefined }, true);
-      }
-    } else if (msg.role === 'assistant') {
-      const textBlocks = ((msg.content as MessageContentBlock[]) || []).filter((b) => b.type === 'text');
-      const thinkingBlocks = ((msg.content as MessageContentBlock[]) || []).filter((b) => b.type === 'thinking');
-      const toolCalls = ((msg.content as MessageContentBlock[]) || []).filter((b) => b.type === 'toolCall');
+function cancelHistoryRender() {
+  historyRenderToken++;
+}
 
-      // Build content blocks for rendering
-      const contentBlocks = [];
-      for (const block of (msg.content as MessageContentBlock[]) || []) {
-        if (block.type === 'text' || block.type === 'thinking') {
-          contentBlocks.push(block);
-        }
-      }
+// Tear down the conversation view as one unit. Clearing the tool-card map
+// alongside the DOM matters: a stale map would hand out detached cards to
+// later toolCallId lookups (expand/collapse, live tool results).
+function clearConversation() {
+  cancelHistoryRender();
+  messageRenderer.clear();
+  toolCardRenderer.clear();
+}
 
-      const text = textBlocks.map((b) => b.text).join('\n');
-
-      if (text || thinkingBlocks.length > 0) {
-        assistantCount++;
-        messageRenderer.renderAssistantMessage(
-          {
-            content: contentBlocks.length > 0 ? contentBlocks : text,
-            usage: msg.usage,
-          },
-          false,
-          true
-        );
-
-        // Track cost and tokens from history
-        if (msg.usage?.cost?.total) {
-          sessionTotalCost += msg.usage.cost.total;
-        }
-        if (msg.usage?.input) {
-          lastInputTokens = msg.usage.input + (msg.usage.cacheRead || 0);
-          lastUsage = msg.usage;
-        }
-      }
-
-      // Show tool calls as compact history cards
-      for (const tc of toolCalls) {
-        toolCardCount++;
-        const card = toolCardRenderer.createHistoryCard({
-          toolCallId: tc.id,
-          toolName: tc.name,
-          args: tc.arguments || {},
-        });
-        console.log(`[History] Tool card created: ${tc.name}`, card?.offsetHeight, card?.innerHTML?.substring(0, 100));
-      }
-    } else if (msg.role === 'toolResult') {
-      toolResultCount++;
-      toolCardRenderer.addHistoryResult(
-        msg.toolCallId ?? '',
-        { content: (msg.content as MessageContentBlock[]) || [] },
-        msg.isError ?? false
-      );
+function renderHistoryItem(item: HistoryItem, target: ParentNode) {
+  if (item.kind === 'user') {
+    messageRenderer.renderUserMessage({ content: item.content, images: item.images }, true, target);
+  } else if (item.kind === 'assistant') {
+    messageRenderer.renderAssistantMessage({ content: item.content, usage: item.usage }, false, true, target);
+  } else {
+    toolCardRenderer.createHistoryCard(
+      { toolCallId: item.toolCallId, toolName: item.toolName, args: item.args },
+      target
+    );
+    if (item.result !== undefined || item.isError) {
+      toolCardRenderer.addHistoryResult(item.toolCallId, item.result ?? { content: [] }, !!item.isError);
     }
   }
+}
 
-  console.log(`[History] Done: ${userCount} users, ${assistantCount} assistants, ${toolCardCount} tools, ${toolResultCount} results`);
-  console.log(`[History] DOM tool-card count:`, document.querySelectorAll('.tool-card').length);
-  console.log(`[History] DOM thinking-block count:`, document.querySelectorAll('.thinking-block').length);
+function renderSessionHistory(entries: SessionHistoryEntry[]) {
+  const token = ++historyRenderToken;
+  const { items, totalCost, lastInputTokens: builtInputTokens, lastUsage: builtUsage } = buildHistoryItems(entries);
+  console.log(`[History] Rendering ${items.length} items from ${entries.length} entries`);
 
+  // Stats come from the pure pre-pass so the context pill is correct
+  // immediately, even though the DOM fills in newest-first below.
+  sessionTotalCost = totalCost;
+  lastInputTokens = builtInputTokens;
+  lastUsage = builtUsage;
   updateContextPill();
   fetchContextWindow();
+
+  // Render the newest items synchronously so the first paint shows what the
+  // user actually looks at — the bottom of the conversation.
+  let cursor = Math.max(0, items.length - INITIAL_SYNC_ITEMS);
+  const tail = document.createDocumentFragment();
+  for (const item of items.slice(cursor)) renderHistoryItem(item, tail);
+  // Captured before insertion: after appendChild the fragment is empty.
+  let topAnchor: ChildNode | null = tail.firstChild;
+  messagesContainer.appendChild(tail);
 
   // Jump to bottom instantly (no smooth scroll animation)
   messagesContainer.style.scrollBehavior = 'auto';
@@ -1829,6 +1801,50 @@ function renderSessionHistory(entries: SessionHistoryEntry[]) {
       messagesContainer.style.scrollBehavior = '';
     });
   });
+
+  if (cursor === 0) return;
+
+  // Fill in older history above the tail during idle time. Live streaming
+  // messages keep appending at the container's end, below the tail, so the
+  // two never interleave.
+  const scheduleChunk = (fn: () => void) =>
+    typeof requestIdleCallback === 'function' ? requestIdleCallback(fn, { timeout: 500 }) : setTimeout(fn, 16);
+
+  const renderOlderChunk = () => {
+    if (token !== historyRenderToken) return;
+    if (!topAnchor || !topAnchor.isConnected) return;
+
+    const start = Math.max(0, cursor - HISTORY_CHUNK_ITEMS);
+    const chunk = document.createDocumentFragment();
+    for (const item of items.slice(start, cursor)) renderHistoryItem(item, chunk);
+    const newTop: ChildNode | null = chunk.firstChild;
+
+    if (supportsScrollAnchoring) {
+      // Native scroll anchoring keeps the reading position fixed when content
+      // is inserted above the viewport — including the deferred size
+      // refinements content-visibility applies after insertion, which a
+      // one-shot manual compensation cannot track.
+      messagesContainer.insertBefore(chunk, topAnchor);
+    } else {
+      // Fallback (Safari): compensate scrollTop for the added height in the
+      // same task, so nothing paints in between. scroll-behavior must be
+      // forced instant for the assignment — the container's CSS smooth
+      // behavior would animate it and lag behind the chunks.
+      const prevBehavior = messagesContainer.style.scrollBehavior;
+      messagesContainer.style.scrollBehavior = 'auto';
+      const prevHeight = messagesContainer.scrollHeight;
+      const prevTop = messagesContainer.scrollTop;
+      messagesContainer.insertBefore(chunk, topAnchor);
+      messagesContainer.scrollTop = prevTop + (messagesContainer.scrollHeight - prevHeight);
+      messagesContainer.style.scrollBehavior = prevBehavior;
+    }
+
+    if (newTop) topAnchor = newTop;
+    cursor = start;
+    if (cursor > 0) scheduleChunk(renderOlderChunk);
+  };
+
+  scheduleChunk(renderOlderChunk);
 }
 
 // ═══════════════════════════════════════

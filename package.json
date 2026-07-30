@@ -60,7 +60,8 @@
     "build": "tsc -p tsconfig.server.json && tsc -p tsconfig.public.json && node scripts/copy-katex.mjs",
     "prepare": "npm run build",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.public.json --noEmit && tsc -p tsconfig.test.json",
-    "test": "npm run build && node --test"
+    "test": "npm run build && node --test test/*.test.ts",
+    "test:e2e": "bash scripts/e2e.sh"
   },
   "dependencies": {
     "ws": "^8.21.1"
@@ -70,6 +71,7 @@
     "@types/node": "^26.1.1",
     "@types/ws": "^8.18.1",
     "katex": "^0.18.1",
+    "playwright": "1.61.1",
     "typescript": "^7.0.2"
   }
 }

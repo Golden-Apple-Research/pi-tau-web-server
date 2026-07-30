@@ -141,7 +141,7 @@ export class ToolCardRenderer {
   /**
    * Create a pre-collapsed card for session history using DOM methods (no innerHTML)
    */
-  createHistoryCard(toolExecution: ToolExecution) {
+  createHistoryCard(toolExecution: ToolExecution, target: ParentNode = this.container) {
     const { toolCallId, toolName, args } = toolExecution;
 
     const card = document.createElement('div');
@@ -237,7 +237,7 @@ export class ToolCardRenderer {
 
     card.appendChild(body);
 
-    this.container.appendChild(card);
+    target.appendChild(card);
     this.toolCards.set(String(toolCallId || ''), card);
 
     return card;

@@ -1481,6 +1481,14 @@ body {
   scroll-behavior: smooth;
 }
 
+/* Skip layout/paint for history far above the viewport. Streaming messages
+   lack the .history class, so live rendering is unaffected. */
+.messages > .message.history,
+.messages > .tool-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 60px;
+}
+
 .messages::-webkit-scrollbar { width: 6px; }
 .messages::-webkit-scrollbar-track { background: transparent; }
 .messages::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 3px; }
