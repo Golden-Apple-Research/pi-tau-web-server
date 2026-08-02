@@ -18,7 +18,7 @@ process.env.PI_CODING_AGENT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tau-e2e
 process.env.PI_CODING_AGENT_SESSION_DIR = path.join(process.env.PI_CODING_AGENT_DIR, 'sessions');
 process.env.TAU_PROJECTS_DIR = path.join(process.env.PI_CODING_AGENT_DIR, 'projects');
 
-const { server, computeUrls, SESSIONS_DIR, _setSpawnPiForTest, _setExecFileForTest } = require('../../bin/tau.js');
+const { server, computeUrls, SESSIONS_DIR, liveManager, _setSpawnPiForTest, _setExecFileForTest } = require('../../bin/tau.js');
 const { chromium } = require('playwright');
 import type { TestContext } from 'node:test';
 import type { Browser, BrowserContext, Page } from 'playwright';
@@ -108,9 +108,23 @@ let smallFile = '';
 // auto-restores the previous test's active session. CPU throttling makes the
 // progressive fill reliably span many frames even on fast machines, so the
 // "tail painted before full history" window is wide enough to observe.
-async function openPage() {
+type OpenPageOptions = { forceManualScrollAnchoring?: boolean };
+
+async function openPage(options: OpenPageOptions = {}) {
   const context = await browser!.newContext();
   contexts.push(context);
+  if (options.forceManualScrollAnchoring) {
+    await context.addInitScript(() => {
+      const nativeSupports = CSS.supports.bind(CSS);
+      Object.defineProperty(CSS, 'supports', {
+        configurable: true,
+        value: (property: string, value?: string) =>
+          property === 'overflow-anchor'
+            ? false
+            : (value === undefined ? nativeSupports(property) : nativeSupports(property, value)),
+      });
+    });
+  }
   const page = await context.newPage();
   const errors: string[] = [];
   page.on('pageerror', (err: Error) => errors.push(`pageerror: ${err.message}`));
@@ -124,6 +138,11 @@ async function openPage() {
   const cdp = await context.newCDPSession(page);
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
   await page.goto(base);
+  if (options.forceManualScrollAnchoring) {
+    // Chromium normally applies native anchoring even when app code takes the
+    // manual branch. Disable it so this page behaves like stable Safari.
+    await page.addStyleTag({ content: '.messages { overflow-anchor: none !important; }' });
+  }
   await page.waitForSelector('.session-item', { timeout: 15000 });
   return { page, errors };
 }
@@ -134,6 +153,48 @@ function sessionItemSelector(filePath: string) {
 
 async function assertNoPageErrors(errors: string[]) {
   assert.deepEqual(errors, []);
+}
+
+async function assertProgressiveFillPreservesReadingPosition(page: Page, mode: string) {
+  await page.click(sessionItemSelector(largeFile));
+  await page.waitForFunction(
+    (marker: string) => document.getElementById('messages')?.textContent?.includes(marker),
+    LAST_MARKER,
+    { timeout: 30000 }
+  );
+  // Let the app's one-time jump-to-bottom finish first; anchoring before it
+  // would race a scroll the app performs by design on open.
+  await page.waitForFunction(() => {
+    const el = document.getElementById('messages')!;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 10;
+  }, undefined, { timeout: 5000 });
+
+  // Anchor on the oldest currently-rendered message (top of the synchronous
+  // tail) while chunks are still prepending above it.
+  const before = await page.evaluate(() => {
+    const el = document.querySelector('#messages > .message');
+    el!.scrollIntoView({ behavior: 'instant', block: 'start' });
+    return { marker: el!.textContent!.slice(0, 40), top: el!.getBoundingClientRect().top };
+  });
+
+  await page.waitForFunction(
+    (expected: number) =>
+      document.querySelectorAll('#messages > .message, #messages > .tool-card').length === expected,
+    TOTAL_ITEMS,
+    { timeout: 60000 }
+  );
+
+  const afterTop = await page.evaluate((marker: string) => {
+    const nodes = document.querySelectorAll('#messages > .message');
+    for (const el of nodes) {
+      if (el.textContent!.slice(0, 40) === marker) return el.getBoundingClientRect().top;
+    }
+    return null;
+  }, before.marker);
+
+  assert.notEqual(afterTop, null, 'anchored message disappeared');
+  assert.ok(Math.abs((afterTop as number) - before.top) <= 3,
+    `anchored message moved from ${before.top} to ${afterTop} with ${mode}`);
 }
 
 // ── Setup / teardown ──────────────────────────────────────────────────────
@@ -167,6 +228,7 @@ before(async () => {
 after(async () => {
   for (const context of contexts) await context.close().catch(() => {});
   if (browser) await browser.close().catch(() => {});
+  await liveManager.shutdown();
   _setSpawnPiForTest(null);
   _setExecFileForTest(null);
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -250,26 +312,38 @@ test('prepending older chunks preserves the reading position', async (t: TestCon
   if (skipUnlessBrowser(t)) return;
   const { page, errors } = await openPage();
 
+  await assertProgressiveFillPreservesReadingPosition(page, 'native scroll anchoring');
+  await assertNoPageErrors(errors);
+});
+
+test('manual anchoring preserves the reading position when native anchoring is unavailable', async (t: TestContext) => {
+  if (skipUnlessBrowser(t)) return;
+  const { page, errors } = await openPage({ forceManualScrollAnchoring: true });
+
+  await assertProgressiveFillPreservesReadingPosition(page, 'manual scroll anchoring');
+  await assertNoPageErrors(errors);
+});
+
+test('Expand All Tools also expands cards rendered by later history chunks', async (t: TestContext) => {
+  if (skipUnlessBrowser(t)) return;
+  const { page, errors } = await openPage();
+
   await page.click(sessionItemSelector(largeFile));
   await page.waitForFunction(
     (marker: string) => document.getElementById('messages')?.textContent?.includes(marker),
     LAST_MARKER,
     { timeout: 30000 }
   );
-  // Let the app's one-time jump-to-bottom finish first; anchoring before it
-  // would race a scroll the app performs by design on open.
-  await page.waitForFunction(() => {
-    const el = document.getElementById('messages')!;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 10;
-  }, undefined, { timeout: 5000 });
 
-  // Anchor on the oldest currently-rendered message (top of the synchronous
-  // tail) while chunks are still prepending above it.
-  const before = await page.evaluate(() => {
-    const el = document.querySelector('#messages > .message');
-    el!.scrollIntoView({ behavior: 'instant', block: 'start' });
-    return { marker: el!.textContent!.slice(0, 40), top: el!.getBoundingClientRect().top };
+  const countWhenExpanded = await page.evaluate(() => {
+    const count = document.querySelectorAll('#messages > .message, #messages > .tool-card').length;
+    document.getElementById('command-btn')!.click();
+    const command = Array.from(document.querySelectorAll<HTMLElement>('.command-item'))
+      .find((item) => item.textContent?.includes('Expand All Tools'));
+    command!.click();
+    return count;
   });
+  assert.ok(countWhenExpanded < TOTAL_ITEMS, 'Expand All must run while older cards are still pending');
 
   await page.waitForFunction(
     (expected: number) =>
@@ -278,17 +352,15 @@ test('prepending older chunks preserves the reading position', async (t: TestCon
     { timeout: 60000 }
   );
 
-  const afterTop = await page.evaluate((marker: string) => {
-    const nodes = document.querySelectorAll('#messages > .message');
-    for (const el of nodes) {
-      if (el.textContent!.slice(0, 40) === marker) return el.getBoundingClientRect().top;
-    }
-    return null;
-  }, before.marker);
-
-  assert.notEqual(afterTop, null, 'anchored message disappeared');
-  assert.ok(Math.abs((afterTop as number) - before.top) <= 3,
-    `anchored message moved from ${before.top} to ${afterTop} while history filled in above`);
+  const cardState = await page.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('#messages > .tool-card'));
+    return {
+      total: cards.length,
+      expanded: cards.filter((card) => card.querySelector('.tool-card-body')?.classList.contains('expanded')).length,
+    };
+  });
+  assert.ok(cardState.total > 1, 'fixture should contain tool cards across multiple chunks');
+  assert.equal(cardState.expanded, cardState.total, 'deferred tool cards ignored Expand All Tools');
 
   await assertNoPageErrors(errors);
 });
@@ -327,6 +399,63 @@ test('switching sessions mid-fill cancels the old render completely', async (t: 
   });
   assert.equal(hasStale, false, 'session A content leaked into session B');
   assert.equal(count, B_ROUNDS * 2);
+
+  await assertNoPageErrors(errors);
+});
+
+test('scroll to bottom reaches a large live tool card created off-screen', async (t: TestContext) => {
+  if (skipUnlessBrowser(t)) return;
+  const { page, errors } = await openPage();
+
+  await page.click(sessionItemSelector(largeFile));
+  await page.waitForFunction(
+    (expected: number) =>
+      document.querySelectorAll('#messages > .message, #messages > .tool-card').length === expected,
+    TOTAL_ITEMS,
+    { timeout: 60000 }
+  );
+
+  await page.evaluate(() => {
+    document.getElementById('messages')!.scrollTop = 0;
+  });
+  await page.waitForSelector('#scroll-bottom-btn:not(.hidden)');
+
+  const session = liveManager.findBySessionFile(largeFile);
+  assert.ok(session, 'large fixture should have a resumed live session');
+  const toolCallId = 'live-large-tool';
+  const marker = 'live-tool-args-final-line';
+  liveManager.broadcast({
+    type: 'event',
+    sessionId: session.id,
+    event: {
+      type: 'tool_execution_start',
+      toolCallId,
+      toolName: 'write',
+      args: { path: '/tmp/large.txt', content: `${'large argument line\n'.repeat(1000)}${marker}` },
+    },
+  });
+  await page.waitForSelector(`.tool-card[data-tool-call-id="${toolCallId}"]`, { state: 'attached' });
+  await page.waitForFunction(
+    ({ id, text }: { id: string; text: string }) =>
+      document.querySelector(`.tool-card[data-tool-call-id="${id}"]`)?.textContent?.includes(text),
+    { id: toolCallId, text: marker }
+  );
+  // Give content-visibility two frames to classify the new bottom card as
+  // off-screen without forcing a layout measurement of the card itself.
+  await page.evaluate(() => new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  ));
+  const liveCardContentVisibility = await page.evaluate((id: string) => {
+    const card = document.querySelector(`.tool-card[data-tool-call-id="${id}"]`)!;
+    return getComputedStyle(card).contentVisibility;
+  }, toolCallId);
+  assert.equal(liveCardContentVisibility, 'visible', 'live tool cards must remain fully laid out off-screen');
+
+  await page.click('#scroll-bottom-btn');
+  await page.waitForFunction(() => {
+    const el = document.getElementById('messages')!;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 10;
+  }, undefined, { timeout: 5000 });
 
   await assertNoPageErrors(errors);
 });

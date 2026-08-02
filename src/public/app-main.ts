@@ -1735,6 +1735,7 @@ const HISTORY_CHUNK_ITEMS = 50;
 // without it (Safari) need manual scrollTop compensation per chunk.
 const supportsScrollAnchoring =
   typeof CSS !== 'undefined' && !!CSS.supports && CSS.supports('overflow-anchor', 'auto');
+messagesContainer.classList.toggle('native-scroll-anchoring', supportsScrollAnchoring);
 
 // Generation token for the progressive history fill. Bumping it invalidates
 // every scheduled chunk callback, so switching sessions (or re-applying a

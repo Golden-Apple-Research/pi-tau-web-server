@@ -1481,10 +1481,10 @@ body {
   scroll-behavior: smooth;
 }
 
-/* Skip layout/paint for history far above the viewport. Streaming messages
-   lack the .history class, so live rendering is unaffected. */
-.messages > .message.history,
-.messages > .tool-card {
+/* Skip layout/paint for history far above the viewport only when native
+   scroll anchoring can compensate as deferred intrinsic sizes resolve. */
+.messages.native-scroll-anchoring > .message.history,
+.messages.native-scroll-anchoring > .tool-card.history {
   content-visibility: auto;
   contain-intrinsic-size: auto 60px;
 }

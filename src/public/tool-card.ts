@@ -27,10 +27,12 @@ export type ToolResult = {
 export class ToolCardRenderer {
   container: HTMLElement;
   toolCards: Map<string, HTMLElement>;
+  historyCardsExpanded: boolean;
 
   constructor(container: HTMLElement) {
     this.container = container;
     this.toolCards = new Map(); // toolCallId -> element
+    this.historyCardsExpanded = false;
   }
 
   createToolCard(toolExecution: ToolExecution) {
@@ -145,7 +147,7 @@ export class ToolCardRenderer {
     const { toolCallId, toolName, args } = toolExecution;
 
     const card = document.createElement('div');
-    card.className = 'tool-card';
+    card.className = 'tool-card history';
     card.dataset.toolCallId = String(toolCallId || '');
 
     // Header
@@ -156,7 +158,7 @@ export class ToolCardRenderer {
     headerLeft.className = 'tool-header-left';
 
     const chevron = document.createElement('span');
-    chevron.className = 'tool-card-chevron';
+    chevron.className = `tool-card-chevron${this.historyCardsExpanded ? ' expanded' : ''}`;
     chevron.innerHTML = '<svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor"><path d="M2 1l4 3-4 3z"/></svg>';
     headerLeft.appendChild(chevron);
 
@@ -213,9 +215,10 @@ export class ToolCardRenderer {
 
     card.appendChild(header);
 
-    // Body (collapsed by default)
+    // Body is collapsed by default unless Expand All was invoked while
+    // progressive history chunks are still pending.
     const body = document.createElement('div');
-    body.className = 'tool-card-body';
+    body.className = `tool-card-body${this.historyCardsExpanded ? ' expanded' : ''}`;
 
     const isEdit = (toolName === 'edit' || toolName === 'Edit') && args && (args.oldText || args.old_text) && (args.newText || args.new_text);
 
@@ -355,6 +358,7 @@ export class ToolCardRenderer {
   }
 
   expandAll() {
+    this.historyCardsExpanded = true;
     this.toolCards.forEach(card => {
       card.querySelector('.tool-card-body')?.classList.add('expanded');
       card.querySelector('.tool-card-chevron')?.classList.add('expanded');
@@ -362,6 +366,7 @@ export class ToolCardRenderer {
   }
 
   collapseAll() {
+    this.historyCardsExpanded = false;
     this.toolCards.forEach(card => {
       card.querySelector('.tool-card-body')?.classList.remove('expanded');
       card.querySelector('.tool-card-chevron')?.classList.remove('expanded');
@@ -371,5 +376,6 @@ export class ToolCardRenderer {
   clear() {
     this.toolCards.forEach((card) => card.remove());
     this.toolCards.clear();
+    this.historyCardsExpanded = false;
   }
 }

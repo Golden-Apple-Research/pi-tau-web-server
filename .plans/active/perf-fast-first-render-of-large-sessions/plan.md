@@ -45,9 +45,9 @@ export function buildHistoryItems(entries): {
 ### Step 2 — Renderers accept a target (`message-renderer.ts`, `tool-card.ts`)
 
 - `MessageRenderer.renderUserMessage(msg, isHistory = false, target: ParentNode = this.container)` and `renderAssistantMessage(msg, isStreaming = false, isHistory = false, target = this.container)` — replace the final `this.container.appendChild(div)` with `target.appendChild(div)` (message-renderer.ts:85, 130). Keep `.welcome` removal querying `this.container`.
-- `ToolCardRenderer.createHistoryCard(exec, target: ParentNode = this.container)` — same swap (~tool-card.ts:240). Still registers into `this.toolCards` (needed for expand/collapse and live lookups). `addHistoryResult` works unchanged on detached cards.
+- `ToolCardRenderer.createHistoryCard(exec, target: ParentNode = this.container)` — same swap (~tool-card.ts:240). History cards receive a distinct `.history` class, still register into `this.toolCards`, and inherit the current Expand All / Collapse All state so cards created by later chunks remain consistent. `addHistoryResult` works unchanged on detached cards.
 
-No behavioral change for existing callers (defaults preserve current behavior).
+Default targets preserve existing caller behavior; the `.history` marker and deferred Expand All state apply only to historical cards.
 
 ### Step 3 — Rewrite `renderSessionHistory` (`app-main.ts:1732`)
 
@@ -68,6 +68,7 @@ Flow:
 
 **Implementation deviations (found by the e2e tests):**
 - Scroll preservation is done by **native scroll anchoring** where supported (`CSS.supports('overflow-anchor', 'auto')` — Chrome/Firefox): just `insertBefore`, no scrollTop math. Native anchoring also tracks the *deferred* size refinements `content-visibility: auto` applies after insertion, which a one-shot manual compensation cannot (observed ~400px drift). The manual scrollTop compensation is kept only as the Safari fallback.
+- `content-visibility` is enabled only when that same support check succeeds. Safari's manual branch lays out each chunk at its real height so the one-shot `scrollHeight` compensation cannot be invalidated by later intrinsic-size refinements.
 - In the fallback path, the compensation assignment must temporarily force `style.scrollBehavior = 'auto'`: the container's CSS `scroll-behavior: smooth` turns a plain `scrollTop =` assignment into an animated scroll that lags behind the chunk inserts and strands the viewport (observed 60k+ px drift).
 - Consequently `overflow-anchor: none` is **not** added to `.messages` (Step 5) — native anchoring is the mechanism, not a hazard.
 4. `renderHistoryItem(item, frag)` dispatches: user → `renderUserMessage(..., true, frag)`; assistant → `renderAssistantMessage(..., false, true, frag)`; toolCall → `createHistoryCard(..., frag)` then, if the item carries a result, `addHistoryResult(toolCallId, result, isError)`.
@@ -81,16 +82,16 @@ Add a small `clearConversation()` helper: `cancelHistoryRender(); messageRendere
 ### Step 5 — CSS (`public/style.css`)
 
 ```css
-.messages > .message.history,
-.messages > .tool-card {
+.messages.native-scroll-anchoring > .message.history,
+.messages.native-scroll-anchoring > .tool-card.history {
   content-visibility: auto;
   contain-intrinsic-size: auto 60px;
 }
-.messages { overflow-anchor: none; }
 ```
 
-- `content-visibility` skips layout/paint above the viewport; progressive enhancement (ignored where unsupported). Streaming messages lack `.history` so live rendering is unaffected. Drop this rule alone if scroll-up feels jumpy — it's independent of the chunking.
-- `overflow-anchor: none` prevents native scroll anchoring from double-compensating our manual scroll math.
+- `app-main.ts` adds `.native-scroll-anchoring` only when `CSS.supports('overflow-anchor', 'auto')` succeeds, so deferred sizing is never combined with the one-shot manual fallback.
+- Only historical messages and historical tool cards are eligible. Live messages and live tool cards remain fully laid out, preserving streaming and scroll-to-bottom behavior.
+- Native scroll anchoring remains enabled; no `overflow-anchor: none` rule is added.
 
 ### Step 6 — Optional, only if profiling still shows cost
 
@@ -106,7 +107,7 @@ Feasibility verified in the codebase:
 Changes:
 - **devDependency**: `playwright` pinned to `1.61.1` (must match the nixpkgs `playwright-driver` version so the Nix-provided browser bundle is compatible).
 - **New `test/e2e/history-render.e2e.ts`** (node --test, like the rest; kept out of the default `node --test` glob — see script below):
-  - Setup (mirrors http-routes.test.ts): temp `PI_CODING_AGENT_SESSION_DIR`, write fixture JSONLs, `require('../bin/tau.js')`, `server.listen(0, '127.0.0.1')`, `_setSpawnPiForTest(makeFakeChild)`.
+  - Setup (mirrors http-routes.test.ts): temp `PI_CODING_AGENT_SESSION_DIR`, write fixture JSONLs, `require('../bin/tau.js')`, `server.listen(0, '127.0.0.1')`, `_setSpawnPiForTest(makeFakeChild)`. Teardown closes browser contexts, calls `liveManager.shutdown()` to reject pending fake-child RPCs, then closes the server.
   - Fixture A (large, ~3000 entries): numbered user/assistant messages (markdown + a little `$math$`), assistant messages containing `toolCall` blocks followed by `toolResult` entries — including pairs that will straddle chunk boundaries. Numbered content (`msg-0001` … `msg-NNNN`) makes order assertions trivial. Fixture B: small (~5 entries) for the switch test.
   - Launch chromium via the `playwright` library API (`chromium.launch()`); use a CDP session with `Emulation.setCPUThrottlingRate` (~4×) so the progressive fill reliably spans multiple frames instead of finishing instantly on a fast machine.
   - If browser launch fails (no browsers installed), `t.skip()` with a hint to use `scripts/e2e.sh` — plain `npm test` stays green everywhere.
@@ -114,10 +115,13 @@ Changes:
   - Assertions (each replaces a manual check):
     1. **Tail-first paint**: click session A in the sidebar; wait for the *last* fixture message's text to be visible; assert the DOM message count at that moment is **less than** the total (proves the tail rendered before the full history), and that the container is scrolled to the bottom (`scrollTop + clientHeight ≈ scrollHeight`).
     2. **Progressive completion + ordering**: poll until DOM count equals the expected total; assert the first DOM message is `msg-0001` and the last is the final fixture message (prepend order correct).
-    3. **Scroll anchoring**: while chunks are still filling, scroll a mid-history element into view, record its `getBoundingClientRect().top`, wait for fill completion, assert it moved ≤ 2px.
-    4. **Cancellation on switch**: click session A, then immediately session B; after B settles, assert no A-marker text exists in the DOM and B's messages are all present.
-    5. **Tool card pairing across chunks**: expand a tool card from an early (prepended) chunk and one from the synchronous tail; assert each shows its paired result text.
-    6. **Context pill**: assert the pill shows the value computed from fixture usage numbers (pins the stats pre-pass).
+    3. **Native scroll anchoring**: while chunks are still filling, scroll a mid-history element into view, record its `getBoundingClientRect().top`, wait for fill completion, assert it moved ≤ 3px.
+    4. **Manual scroll anchoring**: force the support check false and disable Chromium's native anchoring, then repeat the same viewport-position assertion to exercise the Safari path.
+    5. **Expand All across chunks**: invoke the command while most history is pending, wait for completion, and assert every deferred tool card inherited the expanded state.
+    6. **Cancellation on switch**: click session A, then immediately session B; after B settles, assert no A-marker text exists in the DOM and B's messages are all present.
+    7. **Live tool cards**: create a large live tool card while scrolled up, assert it remains fully laid out rather than receiving history-only `content-visibility`, and verify scroll-to-bottom reaches it.
+    8. **Tool card pairing across chunks**: inspect a card from an early (prepended) chunk and one from the synchronous tail; assert each contains its paired result text.
+    9. **Context pill**: assert the pill shows the value computed from fixture usage numbers (pins the stats pre-pass).
 - **New `scripts/e2e.sh`** (Nix-aware wrapper):
   ```sh
   #!/usr/bin/env bash
@@ -137,8 +141,8 @@ Changes:
 - `src/public/app-main.ts` — renderSessionHistory rewrite, cancellation token, clearConversation helper (lines 561–596, 1622–1832)
 - `src/public/history-render.ts` — **new** pure pre-pass module
 - `src/public/message-renderer.ts` — target param on the two render methods
-- `src/public/tool-card.ts` — target param on `createHistoryCard`
-- `public/style.css` — content-visibility + overflow-anchor
+- `src/public/tool-card.ts` — target param, history marker, and deferred Expand All state on `createHistoryCard`
+- `public/style.css` — history-only content-visibility gated on native scroll anchoring
 - `test/history-render.test.ts` — **new** pure unit suite
 - `test/e2e/history-render.e2e.ts` — **new** Playwright browser suite
 - `scripts/e2e.sh` — **new** Nix-aware e2e runner
@@ -151,5 +155,5 @@ Changes:
    - Stats regression pins: `totalCost` sums `usage.cost.total`; `lastInputTokens`/`lastUsage` come from the *last* assistant message with usage.
    - Content shaping: string vs block user content, image extraction, thinking-only assistant produces an item, tool-call-only assistant produces no assistant item but does produce toolCall items.
    - Run: `npm test`; `npm run typecheck`.
-2. **Browser e2e**: `npm run test:e2e` (Step 7) — covers tail-first paint, progressive completion/ordering, scroll anchoring, mid-fill session switch, tool-card pairing, context pill, zero console errors.
+2. **Browser e2e**: `npm run test:e2e` (Step 7) — covers tail-first paint, progressive completion/ordering, native and manual scroll anchoring, Expand All across deferred chunks, mid-fill session switch, live/history tool-card isolation, tool-result pairing, context pill, and zero console errors.
 3. **One-off profiling** (not a gate): DevTools Performance baseline vs. after Step 0 alone vs. after full change, to confirm the forced-reflow removal's share of the win.
