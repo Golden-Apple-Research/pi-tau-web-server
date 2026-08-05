@@ -1,4 +1,7 @@
-# Commit Style
+## Commit Messages & Communication
+
+Write commit messages and explanations to the user in plain English for the
+user.
 
 Commit messages in this repo should read like a human explaining the change, not telegraphic shorthand. The maintainer has repeatedly pushed back on terse, abbreviated subject lines that drop the words that carry the actual intent.
 
