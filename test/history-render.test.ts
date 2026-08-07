@@ -1,9 +1,9 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 
-// Pure, DOM-free pre-pass module — compiled to an ES module; node's
-// require(esm) loads it fine since the graph has no top-level await.
-const { buildHistoryItems } = require('../public/history-render.js');
+// The compiled frontend module is a plain JS artifact without declarations;
+// the old require() call typed these as any, so keep that contract here.
+const { buildHistoryItems } = (await import('../public/history-render.js')) as any;
 
 type Entry = { type?: string; message?: Record<string, unknown> };
 

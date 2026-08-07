@@ -1,9 +1,9 @@
-const { test, after } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { spawn, spawnSync } = require('node:child_process');
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { spawn, spawnSync } from 'node:child_process';
 
 import type { ChildProcess } from 'node:child_process';
 import type { TestContext } from 'node:test';
@@ -14,6 +14,8 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'tau-tree-'));
 process.env.PI_CODING_AGENT_DIR = TMP;
 process.env.PI_CODING_AGENT_SESSION_DIR = path.join(TMP, 'sessions');
 
+// Load the server after the env is in place: the module reads it at load
+// time, and ESM hoists static imports ahead of this body.
 const {
   handleRpcCommand,
   liveManager,
@@ -24,11 +26,11 @@ const {
   leafDescendsFrom,
   NAVIGATE_COMMAND,
   NAVIGATION_MARKER_TYPE,
-} = require('../bin/tau.js');
+} = (await import('../bin/tau.js')) as any;
 
 type Json = Record<string, any>;
 
-const EXTENSION_PATH = path.resolve(__dirname, '..', 'src', 'pi-extension', 'tau-tree.ts');
+const EXTENSION_PATH = path.resolve(import.meta.dirname, '..', 'src', 'pi-extension', 'tau-tree.ts');
 const PROJ = fs.mkdtempSync(path.join(os.tmpdir(), 'tau-tree-proj-'));
 let fileCounter = 0;
 

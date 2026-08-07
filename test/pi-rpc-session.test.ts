@@ -1,13 +1,17 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const path = require('node:path');
-const os = require('node:os');
-const fs = require('node:fs');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 process.env.PI_CODING_AGENT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tau-pirs-'));
 process.env.PI_CODING_AGENT_SESSION_DIR = path.join(process.env.PI_CODING_AGENT_DIR, 'sessions');
 
-const { PiRpcSession, normalizeModel, parseModelSpecToModel, handleRpcCommand, liveManager, _setSpawnPiForTest, NAVIGATE_COMMAND } = require('../bin/tau.js');
+// Load the server after the env is in place: the module reads it at load
+// time, and ESM hoists static imports ahead of this body.
+const { PiRpcSession, LiveSessionManager, normalizeModel, parseModelSpecToModel, handleRpcCommand, liveManager, _setSpawnPiForTest, NAVIGATE_COMMAND } = (await import('../bin/tau.js')) as any;
 import type { TestContext } from 'node:test';
 
 interface BroadcastMsg {
@@ -394,9 +398,7 @@ test('start() passes --session <file> to spawned pi when sessionFile is set', as
   const spawnArgs: Array<{ cmd: string; args: string[] }> = [];
   _setSpawnPiForTest((cmd: string, args: string[], _opts: Record<string, unknown>) => {
     spawnArgs.push({ cmd, args });
-    const { EventEmitter } = require('node:events');
-    const { PassThrough } = require('node:stream');
-    const child = new EventEmitter();
+    const child: any = new EventEmitter();
     child.stdin = new PassThrough();
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
@@ -405,8 +407,8 @@ test('start() passes --session <file> to spawned pi when sessionFile is set', as
     return child;
   });
   t.after(() => _setSpawnPiForTest(null));
-  const mgr = new (require('../bin/tau.js').LiveSessionManager)();
-  const cwd = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'tau-spawnargs-'));
+  const mgr = new LiveSessionManager();
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tau-spawnargs-'));
   const createP = mgr.resume({ sessionFile: '/tmp/some-session.jsonl', cwd, model: 'openai/gpt-4o' });
   t.mock.timers.tick(100);
   await createP;
@@ -425,9 +427,7 @@ test('start() passes --session <file> to spawned pi when sessionFile is set', as
 test('startup get_state response populates model and broadcasts live_session_updated', async (t: TestContext) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const writes: string[] = [];
-  const { EventEmitter } = require('node:events');
-  const { PassThrough } = require('node:stream');
-  const child = new EventEmitter();
+  const child: any = new EventEmitter();
   child.stdin = { writable: true, write: ((data: string, cb?: (err?: Error | null) => void) => { writes.push(data); cb && cb(); }) as FakeWrite };
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
@@ -435,7 +435,7 @@ test('startup get_state response populates model and broadcasts live_session_upd
   child.kill = () => {};
   _setSpawnPiForTest(() => child);
   t.after(() => _setSpawnPiForTest(null));
-  const mgr = new (require('../bin/tau.js').LiveSessionManager)();
+  const mgr = new LiveSessionManager();
   const broadcasts: BroadcastMsg[] = [];
   mgr.broadcast = (msg: BroadcastMsg) => { broadcasts.push(msg); };
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tau-startup-state-'));

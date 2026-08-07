@@ -1,5 +1,8 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+// The built server module is a plain JS artifact without declarations; the
+// old require() call typed these as any, so keep that contract here.
 const {
   parseArgs,
   expandHome,
@@ -7,7 +10,7 @@ const {
   makeId,
   isWithinPath,
   isAllowedApiOrigin,
-} = require('../bin/tau.js');
+} = (await import('../bin/tau.js')) as any;
 
 test('parseArgs parses --key value pairs and boolean --open', () => {
   assert.deepEqual(parseArgs([]), {});

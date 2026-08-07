@@ -1,9 +1,9 @@
-const { test, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
+import { test, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
 
-// The frontend modules are compiled to ES modules; node's require(esm) loads
-// them fine since the graph has no top-level await.
-const { renderMarkdown, renderUserMarkdown } = require('../public/markdown.js');
+// The compiled frontend module is a plain JS artifact without declarations;
+// the old require() call typed these as any, so keep that contract here.
+const { renderMarkdown, renderUserMarkdown } = (await import('../public/markdown.js')) as any;
 
 // Stub KaTeX with a marker-emitting renderer so tests can assert on what was
 // sent to it without pulling the real library into node.

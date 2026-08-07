@@ -1,8 +1,8 @@
-const { test, beforeEach, before, after } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { test, beforeEach, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 // Isolate settings + sessions in a temp tree, and configure auth credentials
 // so set_auth can succeed. Env must be set before requiring the module.
@@ -12,6 +12,8 @@ process.env.PI_CODING_AGENT_SESSION_DIR = path.join(TMP, 'sessions');
 process.env.TAU_USER = 'admin';
 process.env.TAU_PASS = 's3cret';
 
+// Load the server after the env + credentials are in place: the module reads
+// them at load time, and ESM hoists static imports ahead of this body.
 const {
   handleRpcCommand,
   liveManager,
@@ -20,7 +22,7 @@ const {
   _setAuthForTest,
   _setExecFileForTest,
   SESSIONS_DIR,
-} = require('../bin/tau.js');
+} = (await import('../bin/tau.js')) as any;
 
 interface RpcTestSession {
   id: string;
@@ -279,7 +281,7 @@ test('export_html rejects an outputPath outside the session directory before inv
 
 test('set_auth persists the enabled flag to settings.json', async () => {
   await handleRpcCommand({ type: 'set_auth', enabled: true });
-  const settingsPath = path.join(process.env.PI_CODING_AGENT_DIR, 'settings.json');
+  const settingsPath = path.join(process.env.PI_CODING_AGENT_DIR!, 'settings.json');
   const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   assert.equal(parsed.tau.authEnabled, true);
 });

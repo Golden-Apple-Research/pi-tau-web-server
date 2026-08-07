@@ -1,10 +1,11 @@
-const { test, before, after } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { EventEmitter } = require('node:events');
-const { PassThrough } = require('node:stream');
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { chromium } from 'playwright';
 
 // Real-browser test of the progressive session-history render: it drives the
 // actual UI against the in-process server, with the pi child process mocked
@@ -18,8 +19,9 @@ process.env.PI_CODING_AGENT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tau-e2e
 process.env.PI_CODING_AGENT_SESSION_DIR = path.join(process.env.PI_CODING_AGENT_DIR, 'sessions');
 process.env.TAU_PROJECTS_DIR = path.join(process.env.PI_CODING_AGENT_DIR, 'projects');
 
-const { server, computeUrls, SESSIONS_DIR, liveManager, _setSpawnPiForTest, _setExecFileForTest } = require('../../bin/tau.js');
-const { chromium } = require('playwright');
+// Load the server after the env is in place: the module reads it at load
+// time, and ESM hoists static imports ahead of this body.
+const { server, computeUrls, SESSIONS_DIR, liveManager, _setSpawnPiForTest, _setExecFileForTest } = (await import('../../bin/tau.js')) as any;
 import type { TestContext } from 'node:test';
 import type { Browser, BrowserContext, Page } from 'playwright';
 
@@ -33,7 +35,7 @@ const PROJ_DIR = path.join(SESSIONS_DIR, '--tmp--e2eproj');
 // Same realistic fake `pi` child as test/http-routes.test.ts: real streams so
 // the RPC wiring works, an EventEmitter so error/exit listeners resolve.
 function makeFakeChild() {
-  const child = new EventEmitter();
+  const child: any = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();

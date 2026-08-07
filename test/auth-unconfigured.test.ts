@@ -1,8 +1,8 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 // Load the module with NO credentials configured: no TAU_USER / TAU_PASS env
 // vars and no settings.json in the agent dir. AUTH_CONFIGURED is a load-time
@@ -15,7 +15,9 @@ process.env.PI_CODING_AGENT_SESSION_DIR = path.join(TMP, 'sessions');
 delete process.env.TAU_USER;
 delete process.env.TAU_PASS;
 
-const { handleRpcCommand } = require('../bin/tau.js');
+// Load the module after clearing env: AUTH_CONFIGURED is computed at load
+// time, and ESM hoists static imports ahead of this body.
+const { handleRpcCommand } = (await import('../bin/tau.js')) as any;
 
 test('get_auth reports configured: false when no credentials are set', async () => {
   const resp = await handleRpcCommand({ type: 'get_auth' });

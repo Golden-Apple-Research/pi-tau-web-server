@@ -1,12 +1,15 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { EventEmitter } = require('node:events');
-const { PassThrough } = require('node:stream');
-const { WebSocket } = require('ws');
-const { LiveSessionManager, _setSpawnPiForTest } = require('../bin/tau.js');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { WebSocket } from 'ws';
+
+// The built server module is a plain JS artifact without declarations; the
+// old require() call typed these as any, so keep that contract here.
+const { LiveSessionManager, _setSpawnPiForTest } = (await import('../bin/tau.js')) as any;
 import type { TestContext } from 'node:test';
 
 interface StubClient {
@@ -146,7 +149,7 @@ test('shutdown terminates all managed sessions and clears the map', async () => 
 // A realistic fake `pi` child: real streams so start()'s setEncoding/on('data')
 // wiring works, and an EventEmitter so on('error')/on('exit') resolve startup.
 function makeFakeChild() {
-  const child = new EventEmitter();
+  const child: any = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();

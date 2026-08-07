@@ -1,10 +1,10 @@
-const { test, before, after, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { EventEmitter } = require('node:events');
-const { PassThrough } = require('node:stream');
+import { test, before, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 // Loopback host so computeUrls() sets a localhost lanUrl; isolate settings.
 process.env.TAU_HOST = '127.0.0.1';
@@ -14,7 +14,9 @@ process.env.PI_CODING_AGENT_SESSION_DIR = path.join(process.env.PI_CODING_AGENT_
 const PROJECTS_DIR = path.join(process.env.PI_CODING_AGENT_DIR, 'projects');
 process.env.TAU_PROJECTS_DIR = PROJECTS_DIR;
 
-const { server, computeUrls, liveManager, SESSIONS_DIR, _setSpawnPiForTest } = require('../bin/tau.js');
+// Load the server after the env is in place: the module reads it at load
+// time, and ESM hoists static imports ahead of this body.
+const { server, computeUrls, liveManager, SESSIONS_DIR, _setSpawnPiForTest } = (await import('../bin/tau.js')) as any;
 import type { TestContext } from 'node:test';
 
 let base = '';
@@ -68,7 +70,7 @@ function fakeSession(id: string): FakeHttpSession {
 // A realistic fake `pi` child: real streams so start()'s setEncoding/on('data')
 // wiring works, and an EventEmitter so on('error')/on('exit') resolve startup.
 function makeFakeChild() {
-  const child = new EventEmitter();
+  const child: any = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
@@ -77,17 +79,19 @@ function makeFakeChild() {
   return child;
 }
 
-before((t: TestContext, done: () => void) => {
-  server.listen(0, '127.0.0.1', () => {
-    const port = server.address().port;
-    computeUrls(port);
-    base = `http://127.0.0.1:${port}`;
-    done();
+before(async () => {
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      computeUrls(port);
+      base = `http://127.0.0.1:${port}`;
+      resolve();
+    });
   });
 });
 
-after((t: TestContext, done: () => void) => {
-  server.close(done);
+after(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
 beforeEach(() => {

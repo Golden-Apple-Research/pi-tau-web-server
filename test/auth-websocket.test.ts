@@ -1,9 +1,9 @@
-const { test, before, after, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { WebSocket } = require('ws');
+import { test, before, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { WebSocket } from 'ws';
 import type { TestContext } from 'node:test';
 import type { WebSocket as WsWebSocket } from 'ws';
 
@@ -20,24 +20,28 @@ fs.writeFileSync(
   JSON.stringify({ tau: { user: 'admin', pass: 's3cret', authEnabled: false } }),
 );
 
-const { server, computeUrls, liveManager, _setAuthForTest } = require('../bin/tau.js');
+// Load the server after the env + settings are in place: the module reads
+// them at load time, and ESM hoists static imports ahead of this body.
+const { server, computeUrls, liveManager, _setAuthForTest } = (await import('../bin/tau.js')) as any;
 
 let base = '';
 let wsUrl = '';
 
-before((t: TestContext, done: () => void) => {
+before(async () => {
   _setAuthForTest(false);
-  server.listen(0, '127.0.0.1', () => {
-    const port = server.address().port;
-    computeUrls(port);
-    base = `http://127.0.0.1:${port}`;
-    wsUrl = `ws://127.0.0.1:${port}/ws`;
-    done();
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      computeUrls(port);
+      base = `http://127.0.0.1:${port}`;
+      wsUrl = `ws://127.0.0.1:${port}/ws`;
+      resolve();
+    });
   });
 });
 
-after((t: TestContext, done: () => void) => {
-  server.close(done);
+after(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
 beforeEach(() => {
