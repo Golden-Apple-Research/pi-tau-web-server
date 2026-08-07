@@ -9,8 +9,7 @@
  * even if the browser restores session cookies with restored tabs.
  */
 
-const crypto = require('node:crypto');
-
+import crypto from 'node:crypto';
 import { TAU_SETTINGS, saveTauSetting } from './config.js';
 
 export const SESSION_COOKIE_NAME = 'tau_session';

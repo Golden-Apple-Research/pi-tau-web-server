@@ -1,6 +1,7 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 import type { TauArgs, TauSettings, TauSettingsFile } from './types.js';
 
@@ -53,11 +54,11 @@ export const STATIC_DIR = process.env.TAU_STATIC_DIR || findPublicDir();
 function findPublicDir() {
   const candidates: string[] = [];
   const add = (p: string) => candidates.push(path.resolve(p));
-  add(path.join(__dirname, '..', 'public'));
+  add(path.join(import.meta.dirname, '..', 'public'));
   add(path.join(process.cwd(), 'public'));
   try {
-    const pkgPath = require.resolve('pi-tau-web-server/package.json');
-    add(path.join(path.dirname(pkgPath), 'public'));
+    const pkgUrl = import.meta.resolve('pi-tau-web-server/package.json');
+    add(path.join(path.dirname(fileURLToPath(pkgUrl)), 'public'));
   } catch {}
   add(path.join(process.cwd(), 'node_modules', 'pi-tau-web-server', 'public'));
   return candidates.find((c) => fs.existsSync(path.join(c, 'index.html'))) || candidates[0];

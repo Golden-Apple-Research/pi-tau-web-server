@@ -1,4 +1,4 @@
-const { execFile } = require('node:child_process');
+import { execFile } from 'node:child_process';
 
 import type { JsonRecord, ModelIdentity, ParsedModelSpec, StatusError } from './types.js';
 
@@ -87,7 +87,10 @@ let modelListCache: { at: number; models: ModelIdentity[] } = { at: 0, models: [
 let _execFileForTest: ExecFileFn | null = null;
 
 export function execFileAsync(file: string, args: string[], opts: JsonRecord): Promise<{ stdout: string; stderr: string }> {
-  const runner: ExecFileFn = _execFileForTest || execFile;
+  // The real execFile's overloads don't fit ExecFileFn's loose shape (the old
+  // require() call yielded `any` here); adapt it once so the test hook and the
+  // runtime path share one signature.
+  const runner: ExecFileFn = _execFileForTest || (execFile as unknown as ExecFileFn);
   return new Promise((resolve, reject) => {
     runner(file, args, opts, (err: NodeJS.ErrnoException | null, stdout: string, stderr: string) => {
       if (err) {

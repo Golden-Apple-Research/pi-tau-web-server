@@ -7,13 +7,13 @@
  * server shutdown terminates child Pi processes.
  */
 
-const http = require('node:http');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { spawn, execFile } = require('node:child_process');
-const readline = require('node:readline');
-const { WebSocketServer, WebSocket } = require('ws');
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { spawn, execFile, type ExecException } from 'node:child_process';
+import readline from 'node:readline';
+import { WebSocketServer, WebSocket } from 'ws';
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Stats, Dirent } from 'node:fs';
@@ -180,7 +180,7 @@ function openUrl(url: string): Promise<void> {
   }
   const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
   return new Promise<void>((resolve, reject) => {
-    execFile(opener, [url], (err: NodeJS.ErrnoException | null) => err ? reject(err) : resolve());
+    execFile(opener, [url], (err: ExecException | null) => err ? reject(err) : resolve());
   });
 }
 
@@ -262,7 +262,7 @@ async function handleRpcCommand(command: RpcCommand): Promise<RpcResponse> {
       const args = ['--export', sf];
       if (command.outputPath) args.push(resolveExportOutputPath(command.outputPath, sf));
       const output = await new Promise<string>((resolve, reject) => {
-        execFile('pi', args, { cwd: session?.cwd || path.dirname(sf), timeout: 30000, encoding: 'utf8' }, (err: NodeJS.ErrnoException | null, stdout: string, stderr: string) => {
+        execFile('pi', args, { cwd: session?.cwd || path.dirname(sf), timeout: 30000, encoding: 'utf8' }, (err: ExecException | null, stdout: string, stderr: string) => {
           if (err) reject(new Error(stderr || err.message)); else resolve(stdout);
         });
       });
@@ -951,7 +951,7 @@ function _issueSessionTokenForTest(expiresAtSeconds?: number) { return issueSess
 // Test-only hook to substitute the `pi` spawn so LiveSessionManager.create()
 // can be exercised without launching a real Pi process.
 
-module.exports = {
+export {
   parseArgs,
   expandHome,
   loadTauSettings,

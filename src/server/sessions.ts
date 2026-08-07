@@ -1,7 +1,7 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const { spawn } = require('node:child_process');
-const { WebSocket } = require('ws');
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { WebSocket } from 'ws';
 
 import type { ChildProcess } from 'node:child_process';
 import type { JsonRecord, LiveClient, ModelIdentity, PendingCommand, RpcCommand, RpcResponse } from './types.js';
@@ -42,7 +42,7 @@ export function makeId() {
 // by navigate_tree — see src/server/tree.ts). The compiled server runs from
 // bin/, while the extension ships as source under src/pi-extension/ because
 // pi loads extension .ts files directly.
-const TAU_TREE_EXTENSION = path.resolve(__dirname, '..', 'src', 'pi-extension', 'tau-tree.ts');
+const TAU_TREE_EXTENSION = path.resolve(import.meta.dirname, '..', 'src', 'pi-extension', 'tau-tree.ts');
 
 export function isGenericSessionName(name: unknown) {
   const normalized = String(name || '').trim().toLowerCase();
