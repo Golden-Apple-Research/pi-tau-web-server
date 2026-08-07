@@ -36,6 +36,7 @@
     "type": "git",
     "url": "https://github.com/milanglacier/pi-tau-web-server.git"
   },
+  "type": "module",
   "main": "./bin/tau.js",
   "bin": {
     "pi-tau-web-server": "./bin/tau.js"
@@ -57,7 +58,7 @@
     "tsconfig.public.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.server.json && tsc -p tsconfig.public.json && node scripts/copy-katex.mjs",
+    "build": "tsc -p tsconfig.server.json && tsc -p tsconfig.public.json && node scripts/copy-katex.ts",
     "prepare": "npm run build",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.public.json --noEmit && tsc -p tsconfig.test.json",
     "test": "npm run build && node --test test/*.test.ts",
