@@ -1,17 +1,10 @@
 #!/usr/bin/env node
 
 import * as tau from './server-main.js';
-import { realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
-// ESM equivalent of the old `require.main === module` check: run the CLI when
-// this file is the entry point. Paths are compared through realpath because
-// npm installs bin entries as symlinks — argv[1] keeps the symlink path while
-// the module URL resolves to the real file.
-const isMain = process.argv[1] !== undefined
-  && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (isMain) {
+// Run the CLI whenever Node selected this module as the entry point, including
+// package-directory (`node .`) and symlinked npm-bin invocations.
+if (import.meta.main) {
   tau.startCli();
 }
 
