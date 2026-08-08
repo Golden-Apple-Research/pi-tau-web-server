@@ -71,3 +71,109 @@ Mechanical per file:
 - **External consumers of `main`**: pi discovers tau via npm (`pi-package` keyword) but tau is bin-first and standalone; no CJS-only consumer found. Default + named exports preserve both interop shapes.
 - **Node type stripping limits**: test files and tau-tree.ts contain only erasable TS (verified); no `--experimental-transform-types` needed.
 - **Rollback**: `git revert` per commit; `bin/` regenerates from source on next `npm run build`.
+
+## Deviations from this plan (appended after implementation)
+
+The migration shipped as five commits (the four planned steps plus this plan
+doc). The changes below record where the implementation differs from what the
+plan above describes. Nothing in the plan was silently changed; these notes
+are appended for the record.
+
+### 1. Tests import the built server with `await import(...) as any`, not static named imports
+
+The plan's step 4 prescribed static `import { ... } from '../bin/tau.js'`.
+That is wrong for 11 of the 15 test files: they set `process.env` (and write
+`settings.json`) at module top level *before* the old `require('../bin/tau.js')`
+so the server's load-time constants (`SESSIONS_DIR`, `AUTH_CONFIGURED`, ...)
+see the test's temp tree. ESM hoists static imports ahead of the module body,
+so a static import would load the server with the real environment. Those
+files therefore keep the ordering contract with a top-level dynamic import
+placed after the env setup:
+
+```ts
+const { server, computeUrls, ... } = (await import('../bin/tau.js')) as any;
+```
+
+The `as any` is not a loss: `require()` returned `any`, so it reproduces the
+old typing contract exactly. It is also *required* for a second reason: the
+compiled `bin/*.js` and `public/*.js` are declaration-less JS, and TypeScript
+rejects typed imports of them (TS7016). `allowJs: true` (added to
+`tsconfig.test.json`, see deviation 3) makes tsc infer types from the JS
+instead, and those inferred types are sometimes actively wrong (e.g. the
+`buildHistoryItems` union in `test/history-render.test.ts` does not narrow the
+way the test code does), so the cast keeps tests on the old `any` contract
+uniformly. Files with no load-time env dependency (helpers, live-session-
+manager, markdown, history-render) use the same pattern for uniformity.
+
+### 2. tau.ts entry check compares realpaths, not `import.meta.url` vs `argv[1]`
+
+The plan's check `import.meta.url === pathToFileURL(process.argv[1]).href`
+fails for npm-installed bins: npm installs `bin` entries as symlinks, and Node
+resolves the ESM entry URL to the *realpath* while `process.argv[1]` keeps the
+symlink path (verified empirically). The shipped check compares realpaths:
+
+```ts
+const isMain = process.argv[1] !== undefined
+  && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+```
+
+### 3. config.ts had two more CJS-isms than the plan listed
+
+Besides the `fs`/`path`/`os` requires, `findPublicDir()` used `__dirname`
+(STATIC_DIR candidate) and `require.resolve('pi-tau-web-server/package.json')`.
+Both converted: `import.meta.dirname` and `import.meta.resolve` (with
+`fileURLToPath`), preserving the same resolution. This is the file the plan
+missed entirely in its per-file list (it listed only auth/config require
+calls under step 3 without noting these two).
+
+### 4. tsconfig.test.json gained `allowJs: true` (not in the plan)
+
+Needed so the static/dynamic imports of `../bin/tau.js` and `../public/*.js`
+resolve at all under NodeNext. `checkJs` stays off. Consequence: `npm run
+typecheck` now requires `bin/` to exist (a prior `npm run build`); the old
+`require()` form skipped resolution. `npm test` builds first, so the test
+pipeline is unaffected.
+
+### 5. Converting `require()` surfaced ~74 previously masked type errors
+
+`require()` yields `any`, so every value import in the tests was unchecked.
+Once typed, node:test/ws/node builtins flagged real sloppiness, fixed as:
+
+- fake pi children (`new EventEmitter()` + stdin/stdout/stderr/pid/kill)
+  declared `any` (they are deliberate mocks; ~8 sites across http-routes,
+  live-session-manager, pi-rpc-session, e2e);
+- done-style `before`/`after` hooks converted to promise-based async hooks
+  (`await new Promise<void>(...)` around `server.listen`/`server.close`) —
+  node:test's runtime supports both, so behavior is unchanged (8 sites);
+- one `process.env.PI_CODING_AGENT_DIR` access in rpc-command.test.ts got a
+  `!`: TS narrows env property access to `string` only until the first
+  intervening function call, and the access here followed `await
+  handleRpcCommand(...)`;
+- the execFile-related call sites in src/server (model-utils.ts, server-
+  main.ts) needed a one-time cast to the loose `ExecFileFn` shape and
+  `ExecException`-typed callbacks — they were `any` before.
+
+### 6. Baseline typecheck was already red in this environment
+
+`npm run typecheck` on the pre-change tree fails with `Cannot find module
+'playwright'` — playwright is a devDependency used only by `test:e2e` and is
+not installed here. After the migration the same cause yields two errors (the
+new `import { chromium }` plus the pre-existing `import type`), both of which
+resolve once playwright is installed. Server and public typechecks are clean.
+
+### 7. CLI smoke test must be bounded
+
+`node bin/tau.js --help` does not exit: `startCli()` has no `--help` handling,
+it starts the server and runs until SIGTERM (the old CJS bin behaved the
+same). The smoke test therefore uses `timeout` and asserts the server binds
+the port and shuts down on SIGTERM (exit 124), both direct and via a symlink,
+plus a library-import check that the process exits immediately without
+starting the server. The default export carries the same 49 keys as the old
+`module.exports` (the plan's "52" was a miscount).
+
+### 8. Extras
+
+- `.gitignore` comment updated (`.mjs` → `.ts`).
+- `scripts/copy-katex.ts` is a pure rename with zero content change, as planned.
+- The e2e file keeps `import { chromium } from 'playwright'` and the
+  `await import('../../bin/tau.js') as any` after env setup.
